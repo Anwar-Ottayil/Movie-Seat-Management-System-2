@@ -1,206 +1,135 @@
-# 🎬 Movie Seat Management System (Backend)
+# Movie Ticket Booking – Seat Management System
 
-A backend system focused on **managing seat availability for movie shows**.
-This project is intentionally scoped to **seat holding and booking logic only**, designed to handle **high concurrency** and **real‑world booking scenarios**.
+## Overview
 
----
+This project implements a **backend-only seat management system** for movie shows. The system focuses exclusively on managing seat availability and booking behaviour under real-world conditions such as **high concurrency, partial failures, retries, and system restarts**.
 
-## 🚀 Features
-
-* Manage movie show seats
-* Hold seats temporarily (to prevent double booking)
-* Automatically release expired holds
-* Confirm bookings from valid holds
-* Prevent overselling in concurrent requests
-* RESTful API with Swagger documentation
+The goal is to ensure that **no seat is ever sold more than once** and that seat availability remains accurate at all times.
 
 ---
 
-## 🧠 Core Concepts
+## Key Features
 
-### Seat Status Flow
+* Backend-only seat management (no UI, auth, or payments)
+* Clear seat lifecycle:
 
-```
-AVAILABLE → HELD → BOOKED
-       ↑
-   (Hold Expiry)
-```
+  * **AVAILABLE → HELD → BOOKED**
+* Concurrency-safe seat holding using:
 
-| Status    | Description                   |
-| --------- | ----------------------------- |
-| AVAILABLE | Seat is free and can be held  |
-| HELD      | Temporarily locked for a user |
-| BOOKED    | Permanently booked            |
+  * Database transactions
+  * Row-level locking
+* Automatic **hold expiry** and seat restoration when booking is not completed
+* Idempotent and consistent behaviour for:
 
----
+  * Page refreshes
+  * Retry requests
+  * Network failures
+* Safe recovery during **system restarts**
+* APIs to query:
 
-## 🏗️ Tech Stack
-
-* **.NET 8 / ASP.NET Core Web API**
-* **Dapper** (lightweight ORM)
-* **SQL Server**
-* **Swagger (Swashbuckle)**
+  * Available seats
+  * Temporarily held seats
+  * Successfully booked seats
 
 ---
 
-## 🗄️ Database Design (Simplified)
+## Seat Lifecycle
 
-### Shows Table
+1. **AVAILABLE**
 
-```sql
-CREATE TABLE Shows (
-    ShowId UNIQUEIDENTIFIER PRIMARY KEY,
-    MovieName NVARCHAR(100),
-    ShowTime DATETIME
-);
-```
+   * Seat is free and can be held by any user.
 
-### Seats Table
+2. **HELD**
 
-```sql
-CREATE TABLE Seats (
-    SeatId UNIQUEIDENTIFIER PRIMARY KEY,
-    ShowId UNIQUEIDENTIFIER,
-    SeatNumber INT,
-    Status INT, -- 0=Available, 1=Held, 2=Booked
-    HoldId UNIQUEIDENTIFIER NULL,
-    HoldExpiry DATETIME NULL
-);
-```
+   * Seat is temporarily locked for a specific request.
+   * Each hold has an expiry time.
+   * If booking is not confirmed before expiry, the seat automatically returns to AVAILABLE.
+
+3. **BOOKED**
+
+   * Seat is permanently reserved.
+   * Cannot be held or booked again.
 
 ---
 
-## 📌 API Endpoints
+## Handling Real-World Challenges
 
-### 1️⃣ Hold Seats
+### Concurrent Booking Attempts
 
-**POST** `/api/seats/hold`
+* Uses database-level transactions and row locks to prevent race conditions.
+* Ensures two users cannot hold or book the same seat simultaneously.
 
-Request:
+### Incomplete Bookings
 
-```json
-{
-  "showId": "85E789E4-09A4-4714-966C-EF79F08169A5",
-  "seatCount": 2
-}
-```
+* Seats are held with a time limit.
+* If confirmation does not happen within the expiry window, the hold is released automatically.
 
-Behavior:
+### Retries & Page Refresh
 
-* Picks available seats
-* Marks them as `HELD`
-* Generates `HoldId`
-* Sets expiry time (e.g. 2 minutes)
+* Booking confirmation is validated against a valid hold.
+* Duplicate or retry requests do not cause double booking.
 
----
+### System Restarts
 
-### 2️⃣ Confirm Booking
-
-**POST** `/api/seats/confirm/{holdId}`
-
-Behavior:
-
-* Validates hold
-* Converts `HELD → BOOKED`
-* Rejects expired holds
+* Seat state is persisted in the database.
+* Expired holds are detected and restored safely after restart.
 
 ---
 
-### 3️⃣ Release Expired Holds
+## API Capabilities
 
-Automatically handled:
+The system can answer:
 
-* On every hold request **OR**
-* Via background job (recommended)
-
-Expired seats:
-
-```
-HELD → AVAILABLE
-```
+* How many seats are currently **available** for a show?
+* How many seats are **temporarily held**?
+* How many seats are **booked**?
+* What happens when a booking is not completed?
 
 ---
 
-## 🔐 Concurrency Handling
+## Assumptions
 
-The system ensures:
-
-* No two users can book the same seat
-* Seat updates happen inside **transactions**
-* Expired holds are cleaned before allocation
-
-Typical strategy:
-
-* `UPDATE ... WHERE Status = AVAILABLE`
-* `ROWLOCK / UPDLOCK`
+* Payment processing and user authentication are outside the scope.
+* Seats are uniquely identifiable per show.
+* Hold expiry duration is configurable.
 
 ---
 
-## 📖 Swagger Notes (Important)
+## Limitations
 
-Swagger shows **example GUIDs only**.
-
-> ⚠️ Swagger does NOT read values from the database.
-
-You must manually replace example values with **actual ShowIds** from your DB when testing.
-
-Example:
-
-```json
-{
-  "showId": "85E789E4-09A4-4714-966C-EF79F08169A5",
-  "seatCount": 2
-}
-```
+* No distributed locking (single database instance assumed).
+* No user-level booking history.
+* No payment or cancellation workflows.
 
 ---
 
-## 🧪 Sample Data
+## Technology Stack
 
-Insert sample seats:
-
-```sql
-DECLARE @ShowId UNIQUEIDENTIFIER = '85E789E4-09A4-4714-966C-EF79F08169A5';
-
-INSERT INTO Seats (SeatId, ShowId, SeatNumber, Status)
-VALUES
-(NEWID(), @ShowId, 1, 0),
-(NEWID(), @ShowId, 2, 0),
-(NEWID(), @ShowId, 3, 0),
-(NEWID(), @ShowId, 4, 0);
-```
+* Backend: ASP.NET Core Web API
+* Database: SQL Server
+* Data Access: Dapper
 
 ---
 
-## 🎯 Design Decisions
+## How to Run
 
-* Focused only on **seat logic** (no auth/payment)
-* Dapper for performance & control
-* Explicit seat states for clarity
-* Clean separation: Controller → Service → Repository
-
----
-
-## 
-
-> "This service guarantees seat consistency under concurrent access by using transactional seat holds with expiry and state transitions."
+1. Clone the repository
+2. Update database connection string in `appsettings.json`
+3. Run database migrations / scripts
+4. Start the API
 
 ---
 
-## ✅ Possible Enhancements
+## Submission Notes
 
-* Background job (Quartz / Hangfire) for cleanup
-* Seat selection by row/column
-* Idempotent booking confirmation
-* Distributed lock (Redis) for scale
+This project was developed as part of the **Fantacode Hiring Task** with emphasis on:
 
----
+* Correctness
+* Simplicity
+* Reliability under pressure
 
-## 👤 Author
-
-**Anwar Ottayil**
-Backend Developer | ASP.NET Core | SQL Server
+For any clarification or walkthrough, feel free to reach out.
 
 ---
 
-
+**Author:** Anwar Ottayil
